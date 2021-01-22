@@ -33,6 +33,42 @@ struct Foo : torch::CustomClassHolder {
   }
 };
 
+struct FooGetterSetter : torch::CustomClassHolder {
+  FooGetterSetter() : x(0), y(0) {}
+  FooGetterSetter(int64_t x_, int64_t y_) : x(x_), y(y_) {}
+
+  int64_t getX() {
+    // to make sure this is not just attribute lookup
+    return x + 2;
+  }
+  void setX(int64_t z) {
+    // to make sure this is not just attribute lookup
+    x = z + 2;
+  }
+
+  int64_t getY() {
+    // to make sure this is not just attribute lookup
+    return y + 4;
+  }
+
+  ~FooGetterSetter() {
+    // std::cout<<"Destroying object with values: "<<x<<' '<<y<<std::endl;
+  }
+
+ private:
+  int64_t x, y;
+};
+
+struct FooReadWrite : torch::CustomClassHolder {
+  int64_t x;
+  const int64_t y;
+  FooReadWrite() : x(0), y(0) {}
+  FooReadWrite(int64_t x_, int64_t y_) : x(x_), y(y_) {}
+  ~FooReadWrite() {
+    // std::cout<<"Destroying object with values: "<<x<<' '<<y<<std::endl;
+  }
+};
+
 struct LambdaInit : torch::CustomClassHolder {
   int x, y;
   LambdaInit(int x_, int y_) : x(x_), y(y_) {}
@@ -209,6 +245,16 @@ TORCH_LIBRARY(_TorchScriptTesting, m) {
       .def("increment", &Foo::increment)
       .def("add", &Foo::add)
       .def("combine", &Foo::combine);
+
+  m.class_<FooGetterSetter>("_FooGetterSetter")
+      .def(torch::init<int64_t, int64_t>())
+      .def_property("x", &FooGetterSetter::getX, &FooGetterSetter::setX)
+      .def_property("y", &FooGetterSetter::getY);
+
+  m.class_<FooReadWrite>("_FooReadWrite")
+      .def(torch::init<int64_t, int64_t>())
+      .def_readwrite("x", &FooReadWrite::x)
+      .def_readonly("y", &FooReadWrite::y);
 
   m.class_<LambdaInit>("_LambdaInit")
       .def(torch::init([](int64_t x, int64_t y, bool swap) {

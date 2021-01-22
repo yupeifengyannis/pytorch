@@ -1,6 +1,5 @@
 #pragma once
 
-#include <ATen/core/stack.h>
 #include <ATen/core/builtin_function.h>
 #include <ATen/core/function_schema.h>
 #include <ATen/core/ivalue.h>
@@ -11,8 +10,9 @@
 #include <c10/util/Metaprogramming.h>
 #include <c10/util/TypeList.h>
 #include <c10/util/TypeTraits.h>
-#include <torch/library.h>
 #include <torch/custom_class_detail.h>
+#include <torch/library.h>
+#include <cstddef>
 #include <iostream>
 #include <sstream>
 
@@ -153,6 +153,79 @@ class class_ {
     return *this;
   }
 
+  // TODO this is a hack, but it works
+  template <typename GetterFunc, typename SetterFunc = GetterFunc>
+  class_& def_property(
+      std::string name,
+      GetterFunc getterFunc,
+      SetterFunc setterFunc = nullptr,
+      std::string doc_string = "") {
+    torch::jit::Function* getter;
+    torch::jit::Function* setter;
+
+    auto getterName = name + "_getter";
+    auto wrapped_getter =
+        detail::wrap_func<CurClass, GetterFunc>(std::move(getterFunc));
+    getter = process_and_register_property_method(
+        getterName, wrapped_getter, doc_string);
+
+    if (!std::is_same<SetterFunc, GetterFunc>::value) {
+      auto setterName = name + "_setter";
+      auto wrapped_setter =
+          detail::wrap_func<CurClass, SetterFunc>(std::move(setterFunc));
+      setter = process_and_register_property_method(
+          setterName, wrapped_setter, doc_string);
+    }
+
+    classTypePtr->addProperty(name, getter, setter);
+    return *this;
+  }
+
+  template <typename T>
+  class_& def_readwrite(std::string name, T CurClass::*field) {
+    auto getterName = name + "_getter";
+    auto getter =
+        [field = std::move(field)](const c10::intrusive_ptr<CurClass>& self) {
+          return self.get()->*field;
+        };
+
+    auto wrapped_getter = detail::wrap_func<CurClass>(std::move(getter));
+    auto property_getter =
+        process_and_register_property_method(getterName, wrapped_getter);
+
+    auto setterName = name + "_setter";
+    auto setter = [field = std::move(field)](
+                      const c10::intrusive_ptr<CurClass>& self, T value) {
+      self.get()->*field = value;
+    };
+
+    auto wrapped_setter = detail::wrap_func<CurClass>(std::move(setter));
+    auto property_setter =
+        process_and_register_property_method(setterName, wrapped_setter);
+
+    classTypePtr->addProperty(name, property_getter, property_setter);
+
+    return *this;
+  }
+
+  template <typename T>
+  class_& def_readonly(std::string name, T CurClass::*field) {
+    auto getterName = name + "_getter";
+    auto getter =
+        [field = std::move(field)](const c10::intrusive_ptr<CurClass>& self) {
+          return self.get()->*field;
+        };
+
+    auto wrapped_getter = detail::wrap_func<CurClass>(std::move(getter));
+    auto property_getter =
+        process_and_register_property_method(getterName, wrapped_getter);
+
+    torch::jit::Function* property_setter;
+
+    classTypePtr->addProperty(name, property_getter, property_setter);
+    return *this;
+  }
+
   /// This is an unsafe method registration API added for adding custom JIT backend support via custom
   /// C++ classes. It is not for general purpose use.
   class_& _def_unboxed(std::string name, std::function<void(jit::Stack&)> func, c10::FunctionSchema schema, std::string doc_string = "") {
@@ -284,6 +357,34 @@ class class_ {
     // that behavior here.
     classTypePtr->addMethod(method.get());
     registerCustomClassMethod(std::move(method));
+  }
+
+  template <typename Func>
+  torch::jit::Function* process_and_register_property_method(
+      std::string name,
+      Func func,
+      std::string doc_string = "") {
+    auto wrapped_func =
+        [func = std::move(func)](jit::Stack& stack) mutable -> void {
+      using RetType =
+          typename c10::guts::infer_function_traits_t<Func>::return_type;
+      detail::BoxedProxy<RetType, Func>()(stack, func);
+    };
+
+    auto qualifiedName = qualClassName + "." + name;
+    auto nameSchema =
+        c10::inferFunctionSchemaSingleReturn<Func>(std::move(name), "");
+
+    auto method = std::make_unique<jit::BuiltinOpFunction>(
+        qualifiedName,
+        std::move(nameSchema),
+        std::move(wrapped_func),
+        doc_string);
+
+    auto method_val = method.get();
+    registerCustomClassMethod(std::move(method));
+    classTypePtr->addMethod(method_val);
+    return method_val;
   }
 
   std::string qualClassName;

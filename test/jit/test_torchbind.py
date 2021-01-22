@@ -74,7 +74,7 @@ class TestTorchbind(JitTestCase):
         class CustomWrapper(torch.nn.Module):
             def __init__(self, foo):
                 super(CustomWrapper, self).__init__()
-                self.foo = foo 
+                self.foo = foo
 
             def forward(self) -> None:
                 self.foo.increment(1)
@@ -83,7 +83,7 @@ class TestTorchbind(JitTestCase):
             def __prepare_scriptable__(self):
                 int1, int2 = self.foo.return_vals()
                 foo = torch.classes._TorchScriptTesting._Foo(int1, int2)
-                return CustomWrapper(foo) 
+                return CustomWrapper(foo)
 
         foo = CustomWrapper(NonJitableClass(1, 2))
         jit_foo = torch.jit.script(foo)
@@ -129,6 +129,38 @@ class TestTorchbind(JitTestCase):
         self.assertEqual(out[0].pop(), "hi")
         self.assertEqual(out[1].pop(), "mom")
         self.assertEqual(out[1].pop(), "hi")
+
+    def test_torchbind_def_property(self):
+        def foo_getter_setter_full():
+            fooGetterSetter = torch.classes._TorchScriptTesting._FooGetterSetter(5, 6)
+            # getX method intentionally adds 2 to x
+            old = fooGetterSetter.x
+            # setX method intentionally adds 2 to x
+            fooGetterSetter.x = old + 4
+            new = fooGetterSetter.x
+            return fooGetterSetter, old, new
+        scripted = torch.jit.script(foo_getter_setter_full)
+        out, old, new = scripted()
+        self.assertEqual(old, 7)
+        self.assertEqual(new, 15)
+
+        def foo_just_getter():
+            fooGetterSetter = torch.classes._TorchScriptTesting._FooGetterSetter(5, 6)
+            # getY method intentionally adds 4 to x
+            return fooGetterSetter, fooGetterSetter.y
+        scripted = torch.jit.script(foo_just_getter)
+        out, result = scripted()
+        self.assertEqual(result, 10)
+
+        def foo_readwrite():
+            fooReadWrite = torch.classes._TorchScriptTesting._FooReadWrite(5, 6)
+            old = fooReadWrite.x
+            fooReadWrite.x = old + 4
+            return fooReadWrite, fooReadWrite.x, fooReadWrite.y
+        scripted = torch.jit.script(foo_readwrite)
+        out, x, y = scripted()
+        self.assertEqual(x, 9)
+        self.assertEqual(y, 6)
 
     def test_torchbind_take_instance_as_method_arg(self):
         def foo():
