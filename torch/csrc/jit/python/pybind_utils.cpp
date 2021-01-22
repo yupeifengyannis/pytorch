@@ -21,6 +21,10 @@ IValue toIValue(py::handle obj, const TypePtr& type, c10::optional<int32_t> N) {
     }
     case TypeKind::FloatType:
       return py::cast<double>(obj);
+    case TypeKind::ComplexDoubleType: {
+      auto c_obj = py::cast<std::complex<double>>(obj.ptr());
+      return static_cast<c10::complex<double>>(c_obj);
+    }
     case TypeKind::IntType:
     // TODO(xintchen): Handling LayoutType and ScalarTypeType correctly.
     case TypeKind::LayoutType:
@@ -263,8 +267,6 @@ IValue toIValue(py::handle obj, const TypePtr& type, c10::optional<int32_t> N) {
     case TypeKind::AnyClassType:
     case TypeKind::AnyEnumType:
       break;
-    case TypeKind::ComplexDoubleType:
-       AT_ASSERT(false);
     case TypeKind::EnumType:
       EnumTypePtr enum_type = type->expect<EnumType>();
       py::object py_obj = py::reinterpret_borrow<py::object>(obj);
