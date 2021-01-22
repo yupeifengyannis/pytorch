@@ -293,10 +293,192 @@ Writing Transformations
 
 TODO
 
-Debugging Transformations
--------------------------
+Debugging
+-----------
 
-TODO
+Introduction
+^^^^^^^^^^^^^^^^
+
+Once we've generated Python code from our symbolically-traced Module,
+we'll want to verify that the proper semantics were preserved. If they
+weren't, we may need to do some debugging. The key is to work
+backwards: first, check the results of the generated module, then debug
+the generated code, then debug the process of transformations that lead
+to the generated code.
+
+If you’re not familiar with debuggers, please see the auxiliary section
+:ref:`Available debuggers`.
+
+Debugging the Generated Code
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Because FX generates the ``forward()`` function on GraphModules, using
+traditional debugging techniques like ``print`` statements or ``pdb`` is
+not as straightfoward. Luckily, we have several techniques we can use
+for debugging the generated code.
+
+Use ``pdb``
+~~~~~~~~~~~~~
+Invoke ``pdb`` to step into the running program. Although the code that
+represents the FX graph is not in any source file, we can still step
+into it manually using ``pdb`` when the forward pass is invoked.
+
+::
+
+    x, y = torch.rand(2, 3), torch.rand(2, 3)
+    m = symbolic_trace(M())
+    import pdb; pdb.set_trace()
+    m(x, y)
+
+Print the generated code
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+If you’d like to run the same code multiple times, then it can be
+a bit tedious to step to the right code with ``pdb``. In that case, one
+approach is to simply copy-paste the generated ``forward`` pass into
+your code and examine it from there.
+
+::
+
+    # Module whose trace we want to debug
+    class M(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.x = torch.nn.Parameter(torch.rand(4, 3))
+
+        def forward(self, y):
+            return self.x + y
+
+    # Symbolically trace an instance of `M`
+    traced = symbolic_trace(M())
+
+    # Print the code generated from symbolic tracing. This outputs:
+    #   def forward(self, y):
+    #       x = self.x
+    #       add_1 = x + y;  x = y = None
+    #       return add_1
+    # Copy this code for later
+    print(traced)
+
+    # Subclass the original Module
+    class SubclassM(M):
+        def __init__(self):
+            super().__init__()
+
+        # Paste the generated `forward` function (the one we printed and
+        # copied on line 22) here
+        def forward(self, y):
+            x = self.x
+            add_1 = x + y;  x = y = None
+            return add_1
+
+    # Create an instance of the original, untraced Module. Then, create an
+    # instance of the Module with the copied `forward` function. We can
+    # now compare the output of both the original and the traced version.
+    pre_trace = M()
+    post_trace = SubclassM()
+
+
+Use the ``to_folder`` function from ``GraphModule``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+```to_folder``
+<https://pytorch.org/docs/master/fx.html?highlight=to_folder#torch.fx.GraphModule.to_folder>`__
+is a method in ``GraphModule`` that allows you to dump out the generated
+FX code to a folder. Although copying the forward pass into the code
+often suffices as in :ref:`Print the generated code
+<the above section>`, it doesn’t capture any model attribute state.
+To examine modules and parameters, we can use ``to_folder``.
+
+::
+
+    m = symbolic_trace(M())
+    m.to_folder("foo", "Bar")
+    from foo import Bar
+    y = Bar()
+
+After running the above example, we can then look at the code within
+``foo/module.py`` and modify it as desired to debug the generated code.
+
+Debugging the Transformation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+First, read the `FX
+documentation <https://pytorch.org/docs/master/fx.html>`__. Understand
+the most important classes (``Node``, ``Graph``, ``Proxy``, and
+``Tracer``), and determine which class attributes might give you the
+best representation of your program’s intermediate state.
+
+There are several ways to examine what ``symbolic_tracing`` produces:
+
+::
+
+    # Sample Module
+    class M(torch.nn.Module):
+        def forward(self, x, y):
+            return x + y
+
+    # Create an instance of `M`
+    m = M()
+
+    # Symbolically trace an instance of `M` (returns a GraphModule)
+    traced = symbolic_trace(m)
+
+    # Print the code produced by tracing the module. The generated `forward`
+    # function is:
+    #   def forward(self, x, y):
+    #       add_1 = x + y;  x = y = None
+    #       return add_1
+    print(traced)
+
+    # Print the internal Graph. This representation returns:
+    #   graph(x, y):
+    #       %add_1 : [#users=1] = call_function[target=<built-in function add>](args = (%x, %y), kwargs = {})
+    #       return add_1
+    print(traced.graph)
+
+    # Print a tabular representation of the internal Graph. This gives us:
+    #    opcode         name    target                   args      kwargs
+    #    -------------  ------  -----------------------  --------  --------
+    #    placeholder    x       x                        ()        {}
+    #    placeholder    y       y                        ()        {}
+    #    call_function  add_1   <built-in function add>  (x, y)    {}
+    traced.graph.print_tabular()
+
+Using the above example, let’s say that the call to ``print(traced)``
+showed us that symbolic tracing had not captured the right code. We’ve
+checked the :ref:`Limitations of Symbolic Tracing`
+section in the documentation, but we still can’t diagnose our
+particular issue. We want to find what goes wrong using a debugger. We
+start a ``pdb`` session. We can see what’s happening during the
+symbolic tracing by breaking on ``traced = symbolic_trace(m)``, then
+pressing ``s`` to “step into” the call to ``symbolic_trace(m)``.
+
+We may also have good luck by editing the ``print_IR`` method to print
+different attributes of the Nodes in the Graph. (For example, we might
+want to see the Node’s ``input_nodes`` and ``users``.)
+
+Available debuggers
+^^^^^^^^^^^^^^^^^^^^^^
+
+The most common Python debugger is
+```pdb`` <https://docs.python.org/3/library/pdb.html>`__. You can start
+your program in “debug mode” with ``pdb`` by typing
+``python -m pdb FILENAME.py`` into the command line, where ``FILENAME``
+is the name of the file you want to debug. After that, you can use the
+``pdb`` `debugger
+commands <https://docs.python.org/3/library/pdb.html#debugger-commands>`__
+to move through your running program stepwise. It’s common to set a
+breakpoint (``b LINE-NUMBER``) when you start ``pdb`` then call ``c`` to
+run the program until that point. This prevents you from having to step
+through each line of execution (using ``s`` or ``n``) to get to the part
+of the code you want to examine. There are many excellent tutorials on
+``pdb`` online, including RealPython’s `“Python Debugging With
+Pdb” <https://realpython.com/python-debugging-pdb/>`__.
+
+IDEs like PyCharm or VSCode usually have a debugger built in. In your
+IDE, you can choose to either a) use ``pdb`` by pulling up a terminal
+window in your IDE (e.g. View → Terminal in VSCode), or b) use the
+built-in debugger (usually a graphical wrapper around ``pdb``).
+
 
 API Reference
 -------------
