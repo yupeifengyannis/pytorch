@@ -55,6 +55,12 @@ allow_list = [
     ("aten::elu_backward", datetime.date(2021, 1, 31)),
     ("aten::_multinomial_alias_setup", datetime.date(2021, 1, 31)),
     ("aten::_multinomial_alias_draw", datetime.date(2021, 1, 31)),
+    ("aten::_var", datetime.date(2021, 2, 28)),
+    ("aten::_std", datetime.date(2021, 2, 28)),
+    ("aten::var", datetime.date(2021, 2, 28)),
+    ("aten::std", datetime.date(2021, 2, 28)),
+    ("aten::var_mean", datetime.date(2021, 2, 28)),
+    ("aten::std_mean", datetime.date(2021, 2, 28)),
 ]
 
 def allow_listed(schema, allow_list):
