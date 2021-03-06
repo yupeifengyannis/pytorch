@@ -289,7 +289,7 @@ def build_deps():
             report("Could not find {}".format(f))
             report("Did you run 'git submodule update --init --recursive'?")
             sys.exit(1)
-
+    #gloo, cpuinfo, tbb, foxi, QNNPACK, fbgemm等扩展包是编译pytorch必须的
     check_file(os.path.join(third_party_path, "gloo", "CMakeLists.txt"))
     check_file(os.path.join(third_party_path, 'cpuinfo', 'CMakeLists.txt'))
     check_file(os.path.join(third_party_path, 'tbb', 'Makefile'))
@@ -714,6 +714,7 @@ if __name__ == '__main__':
         sys.exit()
 
     if RUN_BUILD_DEPS:
+        # 这里build_deps应该是去变异
         build_deps()
 
     extensions, cmdclass, packages, entry_points, extra_install_requires = configure_extension_build()
